@@ -142,17 +142,20 @@ def background(img, newsize, blur_level, color_level, blend_level,
 def prehandle(img, newsize):
     '''预处理，缩小一下过大的图片，给出模糊方向'''
     size = img.size
-    if size[0] > newsize[0]:
-        # 太宽
-        img.thumbnail((newsize[0], int(size[1] * newsize[0] / size[0])),
-                      Image.ANTIALIAS)
-        # thumbnail直接对原图像进行操作
-        return BLUR_VERTICAL
-    elif size[1] > newsize[1]:
-        # 太高
-        img.thumbnail((int(size[0] * newsize[1] / size[1]), newsize[1]),
-                      Image.ANTIALIAS)
-        return BLUR_HORIZONTAL
+    if size[0] > newsize[0] or size[1] > newsize[1]:
+        xratio = newsize[0] / size[0]
+        yratio = newsize[1] / size[1]
+        if xratio < yratio:
+            # 太宽
+            img.thumbnail((newsize[0], int(size[1] * newsize[0] / size[0])),
+                          Image.ANTIALIAS)
+            # thumbnail直接对原图像进行操作
+            return BLUR_VERTICAL
+        else:
+            # 太高
+            img.thumbnail((int(size[0] * newsize[1] / size[1]), newsize[1]),
+                          Image.ANTIALIAS)
+            return BLUR_HORIZONTAL
     else:
         return BLUR_FULL
 
