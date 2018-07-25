@@ -218,7 +218,8 @@ def main(input_path, output_path, newsize, waifu2x_path, ignore_list={}):
         if file in ignore_list:
             continue
         filepath = os.path.join(input_path, file)
-        newpath = os.path.join(output_path, file)
+        newfilename = os.path.splitext(file)[0] + '.png'
+        newpath = os.path.join(output_path, newfilename)
         if os.path.exists(newpath):
             continue
         print(filepath)

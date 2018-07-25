@@ -2,7 +2,8 @@
 # File name: PixivDownload.py      #
 # Author: Cirn09                   #
 ####################################
-from pixivpy3 import PixivAPI as pp
+# from pixivpy3 import PixivAPI as pp
+from pixivpy3 import AppPixivAPI as pp
 import os
 from PIL import Image
 
@@ -19,14 +20,25 @@ except:
     _SIZE = 200
 
 
-def download_one(api, url, last=False):
+def download_one(api, urls, last=False):
     '''下载单图'''
+    if urls.get('original'):
+        url = urls['original']
+        file_name = os.path.split(url)[-1]
+    else:
+        url = urls['large']
+        origin_name = os.path.split(url)[-1]
+        point_start = origin_name.rfind('_')
+        point_end = origin_name.find('.')
+        file_name = origin_name[:point_start] + origin_name[point_end:]
+    full_path = os.path.join(_PATH, file_name)
+
     try:
-        if os.path.exists(os.path.join(_PATH, os.path.split(url)[-1])):
+        if os.path.exists(full_path):
             global _EXISTS_TIME
             _EXISTS_TIME += 1
             return True
-        api.download(url, path=_PATH)
+        api.download(url, path=_PATH, name=file_name)
         return True
     except:
         if last:
@@ -37,48 +49,28 @@ def download_one(api, url, last=False):
             return download_one(api, url, True)
 
 
-def download_more(api, pid, last=False):
+def download_more(api, urls, last=False):
     '''下载多图'''
-    try:
-        img = api.works(pid)
-        if img['status'] == 'success':
-            # 获取成功
-            for page in img['response'][0]['metadata']['pages']:
-                if os.path.exists(
-                        os.path.join(_PATH,
-                                     os.path.split(
-                                         page['image_urls']['large'])[-1])):
-                    global _EXISTS_TIME
-                    _EXISTS_TIME += 1
-                    # 发现一个已存在就跳脱吧
-                    return True
-                api.download(page['image_urls']['large'], path=_PATH)
-            return True
-        else:
-            raise
-    except:
-        if last:
-            return False
-        else:
-            # 登陆重试一次
-            api.login(_USER, _PASS)
-            return download_more(api, pid, True)
+    result = True
+    for url in urls:
+        result &= download_one(api, url['image_urls'])
+    return result
 
 
-def get_favorite_page(api, page, last=False):
+def get_favorite_page(api, args=None, last=False):
     '''获取一页收藏'''
     try:
-        json = api.me_favorite_works(page, image_sizes=['large'])
-        if json['status'] == 'success':
-            return json
+        if not args:
+            return api.user_bookmarks_illust(api.user_id)
         else:
-            raise
+            return api.user_bookmarks_illust(**args)
+
     except:
         if last:
             return False
         else:
             api.login(_USER, _PASS)
-            return get_favorite_page(api, page, True)
+            return get_favorite_page(api, args, True)
 
 
 def log(done, total, pid, title, type, status):
@@ -110,7 +102,7 @@ def download(username, password, save_path, proxy={}, detach_time=-1):
     _USER = username
     _PASS = password
     _PATH = save_path
-    total = 0
+    total = '?'
     done = 0
     api = pp(**proxy)
     api.login(_USER, _PASS)
@@ -118,33 +110,30 @@ def download(username, password, save_path, proxy={}, detach_time=-1):
     if not os.path.isdir(_PATH):
         os.mkdir(_PATH)
     print('Total\tPID\tTitle\tType\tStatus')
+    next_args = None
     while True:
-        json = get_favorite_page(api, page)
-        total = json['pagination']['total']
-        for fav in json['response']:
+        json = get_favorite_page(api, next_args)
+        for fav in json['illusts']:
             if _EXISTS_TIME > detach_time:
                 print('\nDetached!')
                 return
-            # if fav['work']['type'] == 'illustration' or fav['work']['type'] == 'manga':
-            if fav['work']['type'] == 'illustration':
+            if fav['type'] == 'illust' or fav['type'] == 'manga':
+                #if fav['work']['type'] == 'illustration':
                 # 插画
                 # 部分画师在投稿时可能会把多图投稿成漫画
-                if fav['work']['page_count'] == 1:
+                if fav['page_count'] == 1:
                     done += 1
-                    log(done, total, fav['work']['id'], fav['work']['title'],
-                        fav['work']['type'],
-                        download_one(api, fav['work']['image_urls']['large']))
+                    log(done, total, fav['id'], fav['title'], fav['type'],
+                        download_one(api, fav['image_urls']))
                 else:
                     done += 1
-                    log(done, total, fav['work']['id'], fav['work']['title'],
-                        fav['work']['type'],
-                        download_more(api, fav['work']['id']))
+                    log(done, total, fav['id'], fav['title'], fav['type'],
+                        download_more(api, fav['meta_pages']))
             else:
                 # 动图、漫画、小说
                 done += 1
-                log(done, total, fav['work']['id'], fav['work']['title'],
-                    fav['work']['type'], False)
-        if json['pagination']['next']:
-            page = json['pagination']['next']
+                log(done, total, fav['id'], fav['title'], fav['type'], False)
+        if json.get('next_url'):
+            next_args = api.parse_qs(json['next_url'])
         else:
             break
