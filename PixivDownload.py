@@ -20,17 +20,9 @@ except:
     _SIZE = 200
 
 
-def download_one(api, urls, last=False):
+def download_one(api, url, last=False):
     '''下载单图'''
-    if urls.get('original'):
-        url = urls['original']
-        file_name = os.path.split(url)[-1]
-    else:
-        url = urls['large']
-        origin_name = os.path.split(url)[-1]
-        point_start = origin_name.rfind('_')
-        point_end = origin_name.find('.')
-        file_name = origin_name[:point_start] + origin_name[point_end:]
+    file_name = os.path.split(url)[-1]
     full_path = os.path.join(_PATH, file_name)
 
     try:
@@ -53,7 +45,7 @@ def download_more(api, urls, last=False):
     '''下载多图'''
     result = True
     for url in urls:
-        result &= download_one(api, url['image_urls'])
+        result &= download_one(api, url['image_urls']['original'])
     return result
 
 
@@ -124,7 +116,9 @@ def download(username, password, save_path, proxy={}, detach_time=-1):
                 if fav['page_count'] == 1:
                     done += 1
                     log(done, total, fav['id'], fav['title'], fav['type'],
-                        download_one(api, fav['image_urls']))
+                        download_one(
+                            api,
+                            fav['meta_single_page']['original_image_url']))
                 else:
                     done += 1
                     log(done, total, fav['id'], fav['title'], fav['type'],
