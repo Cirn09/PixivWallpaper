@@ -6,110 +6,110 @@
 from pixivpy3 import AppPixivAPI as pp
 import os
 from PIL import Image
+from Main import log_file, download_path as path
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-_USER = ''
-_PASS = ''
-_PATH = ''
-_EXISTS_TIME = 0
+path = ''
+stop = False
+_LOG_FILE = None
+_SKIP = 0
 try:
     _SIZE = os.get_terminal_size()[0] - 1
 except:
     _SIZE = 200
 
 
-def download_one(api, url, last=False):
+def download_one(api, url):
     '''下载单图'''
+    global _SKIP
     file_name = os.path.split(url)[-1]
-    full_path = os.path.join(_PATH, file_name)
-
-    try:
-        if os.path.exists(full_path):
-            global _EXISTS_TIME
-            _EXISTS_TIME += 1
-            return True
-        api.download(url, path=_PATH, name=file_name)
+    full_path = os.path.join(path, file_name)
+    _LOG_FILE.write(full_path+'\n')
+    if _SKIP:
+        _SKIP -= 1
         return True
-    except:
-        if last:
-            return False
-        else:
-            # 登陆重试一次
-            api.login(_USER, _PASS)
-            return download_one(api, url, True)
+    _LOG_FILE.flush()
+        
+    if os.path.exists(full_path):
+        global stop
+        stop = True
+        return False
+    api.download(url, path=path, name=file_name)
+    return True
 
 
 def download_more(api, urls, last=False):
     '''下载多图'''
     result = True
     for url in urls:
-        result &= download_one(api, url['image_urls']['original'])
+        l = download_one(api, url['image_urls']['original'])
+        result &= l
+    global stop
+    if stop and l:
+        stop = False
+        return True
     return result
 
 
-def get_favorite_page(api, args=None, last=False):
+def get_favorite_page(api, args=None):
     '''获取一页收藏'''
-    try:
-        if not args:
-            return api.user_bookmarks_illust(api.user_id)
-        else:
-            return api.user_bookmarks_illust(**args)
-
-    except:
-        if last:
-            return False
-        else:
-            api.login(_USER, _PASS)
-            return get_favorite_page(api, args, True)
+    if not args:
+        return api.user_bookmarks_illust(api.user_id)
+    else:
+        return api.user_bookmarks_illust(**args)
 
 
 def log(done, total, pid, title, type, status):
     print(' ' * _SIZE, end='\r')
     print('{}/{}\t{}\t{}\t{}\t'.format(done, total, pid, title, type), end='')
     if status:
-        print('Success', end='\r')
+        print('Success')
     else:
         print('Failure or Skip', end='\n')
 
 
-def verify(path, delete=False):
-    filelist = os.listdir(path)
-    for file in filelist:
-        try:
-            with Image.open(os.path.join(path, file)) as img:
-                img.verify()
-        except:
-            print('Broken file:', file)
-            if delete:
-                os.remove(os.path.join(path, file))
 
 
-def download(username, password, save_path, proxy={}, detach_time=-1):
-    global _USER
-    global _PASS
-    global _PATH
-    global _EXISTS_TIME
-    _USER = username
-    _PASS = password
-    _PATH = save_path
+def download(save_path, proxy={}, username=None, password=None, at=None, rt=None):
+    global _LOG_FILE
+    global path
+    global _SKIP
+    path = save_path
     total = '?'
     done = 0
     api = pp(**proxy)
-    api.login(_USER, _PASS)
+    if username and password:
+        api.login(username, password)
+    elif at:
+        api.set_auth(at, rt)
+    else:
+        return
     page = 1
-    if not os.path.isdir(_PATH):
-        os.mkdir(_PATH)
+    if not os.path.isdir(path):
+        os.mkdir(path)
     print('Total\tPID\tTitle\tType\tStatus')
     next_args = None
     while True:
         json = get_favorite_page(api, next_args)
+        if next_args is None:
+            if os.path.exists(log_file):
+                with open(log_file, 'r') as f:
+                    last = f.read().split('\n')
+                if last and str(json['illusts'][0]['id']) in last[0]:
+                    t = len(last) - 1
+                    _SKIP = t
+                    # while t > len(json['illusts']):
+                    #    t -= len(json['illusts'])
+                    #    next_args = api.parse_qs(json['next_url'])
+                    # json['illusts'] = json['illusts'][t:]
+            _LOG_FILE = open(log_file, 'w')
         for fav in json['illusts']:
-            if _EXISTS_TIME > detach_time:
+            if stop:
                 print('\nDetached!')
                 return
-            if fav['type'] == 'illust' or fav['type'] == 'manga':
+            if (fav['type'] == 'illust' or fav['type'] == 'manga') and fav['visible']:
                 #if fav['work']['type'] == 'illustration':
                 # 插画
                 # 部分画师在投稿时可能会把多图投稿成漫画
@@ -131,3 +131,4 @@ def download(username, password, save_path, proxy={}, detach_time=-1):
             next_args = api.parse_qs(json['next_url'])
         else:
             break
+    _LOG_FILE.close()

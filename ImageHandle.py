@@ -9,7 +9,28 @@ from PIL import Image, ImageEnhance as IE, \
     ImageOps as IO
 import os
 import shutil
+import tempfile
+from Main import log_file
 
+
+def verify():
+    if not os.path.exists(log_file):
+        return True
+    with open(log_file, 'r') as f:
+        ld = f.read().split('\n')
+    ld.pop()
+    if ld:
+        try:
+            with Image.open(ld[-1]) as img:
+                img.verify()
+            return False
+        except:
+            print('Broken file:', ld[-1])
+            if os.path.exists(ld[-1]):
+                os.remove(ld[-1])
+            with open(log_file, 'w') as f:
+                f.write('\n'.join(ld[:-1]) + '\n')
+            return True
 
 def waifu2x(input_file, output_file, waifu2x_path, ratio):
     command = '{WAIFU2X_PATH}\\waifu2x-caffe-cui.exe -i \
@@ -214,6 +235,7 @@ def handle(img,
 
 def main(input_path, output_path, newsize, waifu2x_path, ignore_list={}):
     filelist = os.listdir(input_path)
+    td = tempfile.TemporaryDirectory()
     for file in filelist:
         if file in ignore_list:
             continue
@@ -230,6 +252,9 @@ def main(input_path, output_path, newsize, waifu2x_path, ignore_list={}):
                 xratio = newsize[0] / size[0]
                 yratio = newsize[1] / size[1]
                 resize_ratio = xratio if xratio > yratio else yratio
+                if img.mode=='RGBA':
+                    filepath = os.path.join(td.name, file)
+                    background(img, img.size, 0, 1, 1, False).convert('RGB').save(filepath)
                 if resize_ratio <= 0.95:
                     # 什么也不做
                     shutil.copyfile(filepath, newpath)
@@ -306,3 +331,4 @@ if __name__ == '__main__':
     waifu2x_path = r'D:\Tool\waifu2x'
     newsize = (1920, 1080)
     main(input_path, output_path, newsize, waifu2x_path)
+    main(r'D:\Pictures\NP', output_path, newsize, waifu2x_path)
