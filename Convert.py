@@ -10,7 +10,9 @@ from PIL import Image, ImageEnhance as IE, \
 import os
 import shutil
 import tempfile
-from Main import log_file
+import subprocess
+import math
+from config import *
 
 
 def verify():
@@ -32,23 +34,24 @@ def verify():
                 f.write('\n'.join(ld[:-1]) + '\n')
             return True
 
-def waifu2x(input_file, output_file, waifu2x_path, ratio):
-    command = '{WAIFU2X_PATH}\\waifu2x-caffe-cui.exe -i \
-{INPUT_FILE} -o {OUTPUT_FILE} -m noise_scale --scale_ratio \
-{RATIO} --noise_level 2'
 
-    com = command.format(
+def waifu2x(input_file, output_file, waifu2x_path, ratio):
+    command = '"{WAIFU2X_PATH}\\waifu2x-converter-cpp.exe" -i {INPUT_FILE} -o {OUTPUT_FILE} --model-dir \"{WAIFU2X_PATH}\models_rgb\" -m noise-scale --noise-level 2 --scale-ratio {RATIO}'
+    'waifu2x-caffe-cui.exe -i {INPUT_FILE} -o {OUTPUT_FILE} -m noise_scale --scale_ratio {RATIO} --noise_level 2'
+
+    cmd = command.format(
         WAIFU2X_PATH=waifu2x_path,
         INPUT_FILE=input_file,
         OUTPUT_FILE=output_file,
         RATIO=ratio)
-    return os.system(com)
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    return subprocess.call(cmd, startupinfo=si)
 
 
 def isblank_border(img):
     '''判断图片是否为白色背景'''
     # 统计0.1边框上的近白色像素点数量
-    # 四角有较大的权重，会被重复统计两次
     ratio = 0.05
     size = img.size
     xlen = int(size[0] * ratio)
@@ -141,8 +144,8 @@ def background(img, newsize, blur_level, color_level, blend_level,
                mirror=True):
     '''填充处理生成背景'''
     size = img.size
-    resize_raito = min(x / y for x, y in zip(newsize, size))
-    resize = tuple(map(lambda x: int(x * resize_raito), size))
+    resize_ratio = min(x / y for x, y in zip(newsize, size))
+    resize = tuple(map(lambda x: int(x * resize_ratio), size))
     resize_img = IO.fit(img.resize(resize), newsize)
     if mirror:
         mirror_img = IO.mirror(resize_img)
@@ -193,17 +196,17 @@ PASTE_RIGHT = PASTE_V_CENTER | PASTE_H_RIGHT
 PASTE_BOTTOM = PASTE_V_BOTTOM | PASTE_H_CENTER
 
 
-def handle(img,
-           newsize,
-           border_blur=True,
-           border_blur_level=3,
-           border_blur_direct=BLUR_FULL,
-           bg_blank=False,
-           bg_mirror=True,
-           paste_pos=PASTE_CENTER,
-           bg_blur_level=5,
-           bg_color_level=0.9,
-           bg_blend_level=0.16):
+def _convert(img,
+             newsize,
+             border_blur=True,
+             border_blur_level=3,
+             border_blur_direct=BLUR_FULL,
+             bg_blank=False,
+             bg_mirror=True,
+             paste_pos=PASTE_CENTER,
+             bg_blur_level=5,
+             bg_color_level=0.9,
+             bg_blend_level=0.16):
     '''处理图片'''
     size = img.size
     if border_blur:
@@ -233,102 +236,126 @@ def handle(img,
     return bg
 
 
-def main(input_path, output_path, newsize, waifu2x_path, ignore_list={}):
-    filelist = os.listdir(input_path)
-    td = tempfile.TemporaryDirectory()
-    for file in filelist:
-        if file in ignore_list:
-            continue
-        filepath = os.path.join(input_path, file)
-        newfilename = os.path.splitext(file)[0] + '.png'
-        newpath = os.path.join(output_path, newfilename)
-        if os.path.exists(newpath):
-            continue
-        print(filepath)
-        with Image.open(filepath) as img:
-            size = img.size
-            ratio = size[0] / size[1] / (newsize[0] / newsize[1])
-            if 0.85 < ratio < 1.15:
-                xratio = newsize[0] / size[0]
-                yratio = newsize[1] / size[1]
-                resize_ratio = xratio if xratio > yratio else yratio
-                if img.mode=='RGBA':
-                    filepath = os.path.join(td.name, file)
-                    background(img, img.size, 0, 1, 1, False).convert('RGB').save(filepath)
-                if resize_ratio <= 0.95:
-                    # 什么也不做
-                    shutil.copyfile(filepath, newpath)
-                else:
-                    waifu2x(filepath, newpath, waifu2x_path, resize_ratio)
-            elif size[0] / size[1] <= 0.5:
-                # 条幅
-                blur_direct = prehandle(img, newsize)
-                if img.size[0] > newsize[0] * 0.5:
-                    paste_pos = PASTE_CENTER
-                else:
-                    paste_pos = PASTE_RIGHT
-                handle(
-                    img,
-                    newsize,
-                    bg_blank=True,
-                    paste_pos=paste_pos,
-                    border_blur_direct=blur_direct).save(newpath)
-            elif size[0] / size[1] >= 2.0:
-                # 横幅
-                blur_direct = prehandle(img, newsize)
-                blank = isblank_border(img)
-                if img.size[1] > newsize[1] * 0.5:
-                    paste_pos = PASTE_CENTER
-                else:
-                    paste_pos = PASTE_BOTTOM
-                handle(
-                    img,
-                    newsize,
-                    bg_blank=blank,
-                    paste_pos=paste_pos,
-                    bg_mirror=False).save(newpath)
+def convert(inputPath, newsize):
+    with Image.open(inputPath) as img:
+        size = img.size
+        ratio = size[0] / size[1] / (newsize[0] / newsize[1])
+        if 0.85 < ratio < 1.15:
+            xratio = newsize[0] / size[0]
+            yratio = newsize[1] / size[1]
+            resize_ratio = max(xratio, yratio) # if xratio > yratio else yratio
+            # print(inputPath)
+            td = tempfile.TemporaryDirectory()
+            if img.mode == 'RGBA':
+                inputPath = os.path.join(td.name, os.path.split(inputPath)[-1])
+                background(img, img.size, 0, 1, 1, False).convert(
+                    'RGB').save(inputPath)
+            # if resize_ratio <= 0.95:
+            #     # 什么也不做
+            #     shutil.copyfile(inputFile, outputFile)
+            # else:
+            #     waifu2x(inputFile, outputFile, waifu2x_path, resize_ratio)
+            if resize_ratio > 1:
+                tempPath = os.path.join(td.name, 'temp.png')
+
+                waifu2x(inputPath, tempPath, waifu2x_path, resize_ratio)
+                img = Image.open(tempPath)
+                img.load()
+
+            xr = img.size[0] / newsize[0]
+            yr = img.size[1] / newsize[1]
+            r = min(xr, yr)
+            if r > 1:
+                size = tuple(map(lambda x: math.ceil(x*(1/r)), img.size))
+                img.thumbnail(size)
+            if max(xr, yr) > 1:
+                center = img.size[0]/2, img.size[1]/2
+                half = newsize[0]/2, newsize[1]/2
+                box = tuple(map(int, (center[0]-half[0], center[1]-half[1], center[0]+half[0], center[1]+half[1])))
+                img = img.crop(box)
+
+                
+            return img
+
+        elif size[0] / size[1] <= 0.5:
+            # 条幅
+            blur_direct = prehandle(img, newsize)
+            if img.size[0] > newsize[0] * 0.5:
+                paste_pos = PASTE_CENTER
             else:
-                blur_direct = prehandle(img, newsize)
-                size = img.size
-                paste_pos = 0
+                paste_pos = PASTE_RIGHT
+            return _convert(
+                img,
+                newsize,
+                bg_blank=True,
+                paste_pos=paste_pos,
+                border_blur_direct=blur_direct)  # .save(outputFile)
+        elif size[0] / size[1] >= 2.0:
+            # 横幅
+            blur_direct = prehandle(img, newsize)
+            blank = isblank_border(img)
+            if img.size[1] > newsize[1] * 0.5:
+                paste_pos = PASTE_CENTER
+            else:
+                paste_pos = PASTE_BOTTOM
+            return _convert(
+                img,
+                newsize,
+                bg_blank=blank,
+                paste_pos=paste_pos,
+                bg_mirror=False)  # .save(outputFile)
+        else:
+            blur_direct = prehandle(img, newsize)
+            size = img.size
+            paste_pos = 0
+            mirror = True
+            blank = isblank_border(img)
+            # if size[0] / size[1] > 1:
+            #     if size[0] >= newsize[0] * 0.5:
+            #         paste_pos = PASTE_CENTER
+            #         mirror = False
+            #     else:
+            #         paste_pos = PASTE_RIGHT
+            # else:
+            #     paste_pos = PASTE_CENTER
+            #     mirror = False
+            if newsize[0] * 0.25 - size[0] * 0.5 < newsize[0] * 0.065:
+                paste_pos |= PASTE_H_CENTER
+                mirror = False
+            else:
+                paste_pos |= PASTE_H_RIGHT
                 mirror = True
-                blank = isblank_border(img)
-                # if size[0] / size[1] > 1:
-                #     if size[0] >= newsize[0] * 0.5:
-                #         paste_pos = PASTE_CENTER
-                #         mirror = False
-                #     else:
-                #         paste_pos = PASTE_RIGHT
-                # else:
-                #     paste_pos = PASTE_CENTER
-                #     mirror = False
-                if newsize[0] * 0.25 - size[0] * 0.5 < newsize[0] * 0.065:
-                    paste_pos |= PASTE_H_CENTER
-                    mirror = False
-                else:
-                    paste_pos |= PASTE_H_RIGHT
-                    mirror = True
-                if size[1] > newsize[1] * 0.5:
-                    paste_pos |= PASTE_V_CENTER
-                else:
-                    paste_pos |= PASTE_V_BOTTOM
+            if size[1] > newsize[1] * 0.5:
+                paste_pos |= PASTE_V_CENTER
+            else:
+                paste_pos |= PASTE_V_BOTTOM
 
-                if size[0] < newsize[0] * 0.25 or size[1] < newsize[1] * 0.25:
-                    paste_pos = PASTE_RIGHT
-                    blank = True
-                handle(
-                    img,
-                    newsize,
-                    paste_pos=paste_pos,
-                    bg_blank=blank,
-                    bg_mirror=mirror).save(newpath)
+            if size[0] < newsize[0] * 0.25 or size[1] < newsize[1] * 0.25:
+                paste_pos = PASTE_RIGHT
+                blank = True
+            return _convert(
+                img,
+                newsize,
+                paste_pos=paste_pos,
+                bg_blank=blank,
+                bg_mirror=mirror)  # .save(outputFile)
 
 
-if __name__ == '__main__':
-    input_path = r'D:\Pictures\Pixiv'
-    # input_path = r'D:\Work\Py\img'
-    output_path = r'D:\Pictures\Handled'
-    waifu2x_path = r'D:\Tool\waifu2x'
-    newsize = (1920, 1080)
-    main(input_path, output_path, newsize, waifu2x_path)
-    main(r'D:\Pictures\NP', output_path, newsize, waifu2x_path)
+def convertMultiple(size, inputInfo):
+    img = Image.new('RGB', size, 'white')
+    for info in inputInfo:
+        subimg = convert(info['path'], (info['width'], info['height']))
+        img.paste(subimg, (info['x'], info['y']))
+    return img
+
+
+# def main(input_path, output_path, newsize, ignore_list={}):
+#     filelist = os.listdir(input_path)
+#     # td = tempfile.TemporaryDirectory()
+#     for file in filelist:
+#         if file in ignore_list:
+#             continue
+#         filepath = os.path.join(input_path, file)
+#         newfilename = os.path.splitext(file)[0] + '.png'
+#         newpath = os.path.join(output_path, newfilename)
+#         convert(filepath, newpath, newsize)

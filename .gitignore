@@ -1,0 +1,6 @@
+*.pyc
+deprecated
+config_local.py
+last_log
+*.exe
+.vscode
